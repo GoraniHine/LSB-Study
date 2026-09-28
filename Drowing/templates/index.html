@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>CHOCO.DRAW</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+KR:wght@400;500;600;700&family=Noto+Serif+KR:wght@600&display=swap" rel="stylesheet">
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<style>
+  :root{
+    --cocoa:#000000; --cocoa2:#0a0a0a;
+    --caramel:#2a2a2a; --caramel-bright:#eaffe0;
+    --cream:#F6EEE1; --cream-dim:#8a8a8a;
+    --line: rgba(255,255,255,0.14);
+    --ok:#b6ff9e; --bad:#ff6b5b;
+    --panel: #141414;
+    --text-dim: #8a8a8a;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent; user-select:none;}
+  html,body{ height:100%; margin:0; overflow:hidden; }
+  body{
+    background:#000000;
+    color:#ffffff; font-family:'Inter','Noto Sans KR',sans-serif;
+    font-size:15px;
+    display:flex; align-items:center; justify-content:center;
+  }
+
+  /* [추가] 전체 UI를 "기준 디자인 크기"로 고정해두고, 실제 화면 크기에 맞춰
+     비율 그대로 확대/축소한다(JS의 applyUIScale()이 transform:scale 적용).
+     이러면 해상도가 달라져도 사이드바/버튼/캔버스가 전부 같이 커져서
+     레이아웃이 항상 화면에 꽉 차 보인다(검은 여백이 남지 않음). */
+  #app-scale-wrapper{
+    position:relative;
+    width:1920px; height:1080px;
+    transform-origin: center center;
+    flex: none;
+  }
+
+  /* ---------- 전체 그리드: 로고|가운데|설정 / 도구|캔버스|캔버스 / 온도|상태|시작취소 ---------- */
+  .app-grid{
+    display:grid;
+    width:100%; height:100%;
+    grid-template-columns: 340px 1fr 300px;
+    grid-template-rows: 100px 1fr 108px;
+    grid-template-areas:
+      "logo    topmid  settings"
+      "toolbar canvas  canvas"
+      "temp    status  startcancel";
+  }
+  .cell{
+    border:1px solid var(--line);
+    background: var(--panel);
+    display:flex; align-items:center;
+    padding:0 14px; overflow:hidden; min-width:0; min-height:0;
+  }
+  .cell.logo{ grid-area:logo; gap:9px; }
+  .cell.topmid{ grid-area:topmid; justify-content:center; }
+  .cell.settings{ grid-area:settings; justify-content:flex-end; gap:22px; }
+  .cell.toolbar{
+    grid-area:toolbar; flex-direction:column; justify-content:flex-start;
+    gap:10px; padding:14px 10px; overflow-y:auto;
+  }
+  .cell.canvas-area{
+    grid-area:canvas; justify-content:center; padding:14px;
+    background: radial-gradient(ellipse at center, rgba(182,255,158,0.05) 0%, rgba(0,0,0,0) 62%);
+  }
+  .cell.temp{ grid-area:temp; gap:26px; }
+  .cell.status{ grid-area:status; flex-direction:column; align-items:stretch; justify-content:center; gap:6px; }
+  .cell.startcancel{ grid-area:startcancel; justify-content:flex-end; gap:20px; }
+  .cell.startcancel button{ font-size:15px; padding:12px 20px; min-height:50px; }
+
+  .brand{ display:flex; align-items:center; gap:9px; }
+  .dot{ width:12px;height:12px;border-radius:3px; flex:none;
+    background:var(--ok); box-shadow:0 0 8px rgba(182,255,158,.5); }
+  .brand h1{ font-family:'Inter','Noto Sans KR',sans-serif; font-size:26px; font-weight:800; margin:0; letter-spacing:.08em; text-transform:uppercase; white-space:nowrap;}
+
+  .conn-badge{
+    display:flex; align-items:center; gap:9px;
+    font-family:'Inter','Noto Sans KR',sans-serif; font-size:14px; font-weight:700; color:#fff;
+    letter-spacing:.06em; text-transform:uppercase;
+    border:none; border-radius:0; padding:0; white-space:nowrap;
+  }
+  .conn-badge .led{ width:7px;height:7px;border-radius:50%; background:var(--bad); flex:none;}
+  .conn-badge.on .led{ background:var(--ok); box-shadow:0 0 6px var(--ok); }
+
+  button{
+    font-family:'Inter','Noto Sans KR',sans-serif; font-weight:700; font-size:16px;
+    text-transform:uppercase; letter-spacing:.04em;
+    background:#1c1c1c; color:#fff;
+    border:1px solid var(--line); border-radius:8px;
+    padding:14px 18px; cursor:pointer; transition:.15s;
+    min-height:56px; white-space:nowrap;
+  }
+  button:hover{ background:#262626; }
+  button.icon{ padding:0; font-size:22px; line-height:1; width:100%; height:58px; text-transform:none; letter-spacing:0; }
+  .cell.toolbar button.icon{ width:100%; }
+  .tmpl-label{ font-size:15px; font-weight:800; color:var(--text-dim); opacity:.9; letter-spacing:.05em; text-transform:uppercase; padding:2px; margin-top:2px; }
+  .tmpl-grid{ display:grid; grid-template-columns:repeat(3,1fr); gap:6px; width:100%; }
+  .tmpl-grid button.icon{ width:100%; height:42px; font-size:18px; }
+  .tmpl-divider{ width:100%; height:1px; background:var(--line); margin:4px 0; }
+  button.active{ background:var(--ok); border-color:var(--ok); color:#000; }
+  button.primary{ background:var(--ok); border-color:var(--ok); color:#000; }
+  button.danger{ background:transparent; border-color:var(--bad); color:var(--bad); }
+  button:disabled{ opacity:.35; cursor:not-allowed; }
+
+  canvas{
+    background:var(--cream); border-radius:6px; touch-action:none; cursor:crosshair;
+    box-shadow:0 14px 34px -12px rgba(0,0,0,.8), 0 0 0 1px var(--line);
+    max-height:100%; max-width:100%;
+  }
+
+  .therms{ display:flex; gap:16px; }
+  .therm{ font-family:'Inter','Noto Sans KR',sans-serif; display:flex; flex-direction:column; }
+  .therm .v{ font-size:22px; font-weight:800; color:#fff; line-height:1.2; }
+  .therm .l{ font-size:10px; opacity:.6; color:var(--text-dim); letter-spacing:.06em; text-transform:uppercase; }
+
+  .progress-track{ height:8px; background:#0a0a0a; border-radius:5px; overflow:hidden; border:1px solid var(--line);}
+  .progress-fill{ height:100%; width:0%; background:var(--ok); transition:width .2s; }
+  .progress-label{ font-family:'Inter','Noto Sans KR',sans-serif; font-size:11px; color:var(--text-dim); opacity:.9;}
+
+  /* ---------- settings drawer ---------- */
+  .drawer{
+    position:fixed; top:0; right:-300px; width:290px; height:100%;
+    background:#0d0d0d;
+    border-left:1px solid var(--line); padding:16px; transition:right .25s ease;
+    z-index:40; overflow-y:auto; font-size:13px;
+  }
+  .drawer.open{ right:0; }
+  .drawer h3{ font-family:'Inter','Noto Sans KR',sans-serif; font-size:13px; font-weight:800; text-transform:uppercase; letter-spacing:.06em; color:var(--ok); margin:4px 0 10px; }
+  .field{ margin-bottom:9px; display:flex; flex-direction:column; gap:4px; }
+  .field label{ font-size:10.5px; color:var(--text-dim); opacity:.9; }
+  .field input, .field select{
+    background:#000; border:1px solid var(--line); border-radius:6px;
+    color:#fff; padding:7px 9px; font-family:'IBM Plex Mono','Noto Sans KR',monospace; font-size:12px;
+  }
+  .drawer-close{ position:absolute; top:10px; right:10px; width:32px; height:32px; padding:0; font-size:13px;}
+  .overlay{ position:fixed; inset:0; background:rgba(0,0,0,.4); z-index:35; display:none; }
+  .overlay.show{ display:block; }
+
+  /* 세로 공간이 더 좁은 패널 대응 */
+  @media (max-height: 620px){
+    .app-grid{ grid-template-rows: 60px 1fr 64px; }
+    .cell{ padding:0 10px; }
+    button{ min-height:38px; }
+  }
+</style>
+</head>
+<body>
+
+  <div id="app-scale-wrapper">
+  <div class="app-grid">
+    <div class="cell logo">
+      <div class="dot"></div>
+      <h1>CHOCO<span style="color:var(--ok)">.DRAW</span></h1>
+    </div>
+    <div class="cell topmid"></div>
+    <div class="cell settings">
+      <div class="conn-badge" id="connBadge"><span class="led"></span><span id="connText">연결 안됨</span></div>
+      <button class="icon" id="btnSettings" title="설정" style="width:44px;">⚙</button>
+    </div>
+
+    <div class="cell toolbar">
+      <button class="icon active" id="toolPen" title="펜">✎</button>
+      <button class="icon" id="toolLine" title="직선">／</button>
+      <button class="icon" id="toolEraser" title="지우개">⌫</button>
+      <button class="icon" id="btnUndo" title="실행취소">↶</button>
+      <button class="icon" id="btnClear" title="전체 지우기" style="font-size:13px;">전체삭제</button>
+
+      <div class="tmpl-divider"></div>
+      <div class="tmpl-label">따라 그리기</div>
+      <div class="tmpl-grid">
+        <button class="icon tmpl-btn" id="tmplCircle" title="원">○</button>
+        <button class="icon tmpl-btn" id="tmplTriangle" title="세모">△</button>
+        <button class="icon tmpl-btn" id="tmplStar" title="별">☆</button>
+        <button class="icon tmpl-btn" id="tmplSpade" title="스페이드">♤</button>
+        <button class="icon tmpl-btn" id="tmplClub" title="클로버">♧</button>
+        <button class="icon tmpl-btn" id="tmplHeart" title="하트">♡</button>
+        <button class="icon tmpl-btn" id="tmplDiamond" title="다이아">♢</button>
+        <button class="icon" id="btnTmplFill" title="선택한 도형을 그대로 채워서 찍기" style="font-size:13px;">채우기</button>
+        <button class="icon" id="btnTmplClear" title="가이드 지우기" style="font-size:13px;">해제</button>
+      </div>
+    </div>
+    <div class="cell canvas-area">
+      <canvas id="cv" width="600" height="720"></canvas>
+    </div>
+
+    <div class="cell temp">
+      <div class="therm"><span class="v" id="tNozzle">--°</span><span class="l">노즐</span></div>
+      <div class="therm"><span class="v" id="tBed">--°</span><span class="l">배드</span></div>
+    </div>
+    <div class="cell status">
+      <div class="progress-track"><div class="progress-fill" id="progFill"></div></div>
+      <div class="progress-label" id="progLabel">대기 중</div>
+    </div>
+    <div class="cell startcancel">
+      <button class="danger" id="btnCancel" disabled>취소</button>
+      <button class="primary" id="btnPrint" disabled>프린트 시작</button>
+    </div>
+  </div>
+
+  <div class="overlay" id="overlay"></div>
+  <div class="drawer" id="drawer">
+    <button class="icon drawer-close" id="drawerClose">✕</button>
+    <h3>연결</h3>
+    <div class="field">
+      <label>시리얼 포트</label>
+      <select id="portSelect"></select>
+    </div>
+    <div style="display:flex; gap:8px; margin-bottom:20px;">
+      <button id="btnRefreshPorts" style="flex:1;">새로고침</button>
+      <button class="primary" id="btnConnect" style="flex:1;">연결</button>
+    </div>
+
+    <h3>인쇄 파라미터</h3>
+    <div class="field"><label>배드 전체 X / Y (mm)</label><input id="pBedX" value="{{ printer.bed_x }}"></div>
+    <div class="field"><label>기계 X 범위 min / max (mm)</label>
+      <div style="display:flex; gap:6px;">
+        <input id="pPrintXMin" value="{{ printer.print_x_min }}" style="flex:1;">
+        <input id="pPrintXMax" value="{{ printer.print_x_max }}" style="flex:1;">
+      </div>
+    </div>
+    <div class="field"><label>기계 Y 범위 min / max (mm)</label>
+      <div style="display:flex; gap:6px;">
+        <input id="pPrintYMin" value="{{ printer.print_y_min }}" style="flex:1;">
+        <input id="pPrintYMax" value="{{ printer.print_y_max }}" style="flex:1;">
+      </div>
+    </div>
+    <div class="field" style="opacity:.6; font-size:11px;">
+      화면 가로 = 기계 X 범위, 화면 세로 = 기계 Y 범위로 그대로 매핑됩니다(회전 없음). 좌우/앞뒤가 뒤집혀 보이면 app.py의 FLIP_X / FLIP_Y 값을 바꾸세요.
+    </div>
+    <div class="field"><label>첫 층 높이 (mm)</label><input id="pFirstLayer" value="{{ printer.first_layer_height }}"></div>
+    <div class="field"><label>선 두께 (mm)</label><input id="pLineWidth" value="{{ printer.line_width }}"></div>
+    <div class="field"><label>외벽 개수</label><input id="pWalls" value="{{ printer.walls }}"></div>
+    <div class="field"><label>압출량 (%)</label><input id="pFlow" value="{{ printer.flow_pct }}"></div>
+    <div class="field"><label>E 계수 (mm/mm)</label><input id="pECal" value="{{ printer.e_calibration }}"></div>
+    <div class="field"><label>노즐 온도 (°C)</label><input id="pNozzle" value="{{ printer.nozzle_temp }}"></div>
+    <div class="field"><label>배드 온도 (°C)</label><input id="pBed" value="{{ printer.bed_temp }}"></div>
+    <div class="field"><label>리트랙션 (mm)</label><input id="pRetract" value="{{ printer.retract_mm }}"></div>
+    <div class="field" style="opacity:.6; font-size:11px;">시작/끝 G코드는 app.py에 내장되어 있어 UI에는 노출하지 않습니다.</div>
+  </div>
+  </div><!-- /#app-scale-wrapper -->
+
+<script>
+// ---------------- 화면 전체 UI 스케일링 ----------------
+// 위 CSS에서 #app-scale-wrapper를 1360x900 "기준 디자인" 크기로 고정해뒀고,
+// 여기서는 실제 창 크기에 맞는 배율을 계산해서 transform:scale로 적용한다.
+// 이러면 사이드바/버튼 등 고정 px 값들이 화면 크기와 무관하게 항상 같은
+// 비율을 유지한 채로 화면을 꽉 채우게 된다 (해상도가 달라져도 레이아웃이
+// 깨지거나 여백이 남지 않음).
+const DESIGN_WIDTH = 1920, DESIGN_HEIGHT = 1080;
+const scaleWrapper = document.getElementById('app-scale-wrapper');
+function applyUIScale(){
+  const scale = Math.min(window.innerWidth / DESIGN_WIDTH, window.innerHeight / DESIGN_HEIGHT);
+  scaleWrapper.style.transform = `scale(${scale})`;
+}
+window.addEventListener('resize', applyUIScale);
+applyUIScale();
+
+const socket = io();
+
+// ---------------- canvas drawing ----------------
+const canvas = document.getElementById('cv');
+const ctx = canvas.getContext('2d');
+let bedX = {{ printer.bed_x }}, bedY = {{ printer.bed_y }}; // 실제 기계(배드) 전체 크기 (참고용)
+
+// [수정] 축 스왑(가로로 눕혀서 보여주기) 설계를 걷어내고, 화면을 그대로(세로형)
+//   기계 좌표에 매핑한다: 화면 가로(printW) = 기계 X 범위, 화면 세로(printH) = 기계 Y 범위.
+//   실제 좌우/앞뒤 반전 여부는 app.py의 FLIP_X / FLIP_Y 값으로 처리한다.
+let printW = {{ printer.print_x_max - printer.print_x_min }}; // 화면 가로 = 기계 X 범위
+let printH = {{ printer.print_y_max - printer.print_y_min }}; // 화면 세로 = 기계 Y 범위
+let PX_PER_MM = 2.6; // 초기값, resizeCanvas()가 실제 창 크기에 맞춰 다시 계산함
+const mainEl = document.querySelector('.canvas-area');
+
+// 실제 사용 가능한 인쇄 영역(배드 전체)을 화면에 그대로(회전 없이) 표시.
+// 화면 좌표 -> 기계 좌표 오프셋/반전 매핑은 여기서 하지 않고 서버(app.py)의 generate_gcode()에서 처리함.
+function dispBedSize(){
+  return {w: printW, h: printH};
+}
+// 화면 좌표를 그대로 둠 (변환 없음) - 서버로 보낼 stroke 좌표는 "화면 기준(mm), 0부터 시작"임
+function toMachine(dpt){
+  return {x: dpt.x, y: dpt.y};
+}
+function toDisplayPt(mpt){
+  return {x: mpt.x, y: mpt.y};
+}
+
+function computeScale(){
+  const padding = 24; // .main 여백 감안
+  const {w, h} = dispBedSize();
+  const availW = mainEl.clientWidth - padding;
+  const availH = mainEl.clientHeight - padding;
+  return Math.max(0.5, Math.min(availW / w, availH / h));
+}
+
+function resizeCanvas(){
+  PX_PER_MM = computeScale();
+  const {w, h} = dispBedSize();
+  canvas.width = w * PX_PER_MM;
+  canvas.height = h * PX_PER_MM;
+  drawGrid(); redrawStrokes();
+}
+window.addEventListener('resize', resizeCanvas);
+
+function drawGrid(){
+  ctx.fillStyle = '#F6EEE1'; ctx.fillRect(0,0,canvas.width,canvas.height);
+  const {w, h} = dispBedSize();
+  const cx = w/2, cy = h/2; // 캔버스 정중앙을 0,0 기준점으로 삼음
+  const halfSpanX = Math.ceil(cx/10)*10, halfSpanY = Math.ceil(cy/10)*10;
+  for(let ox=-halfSpanX; ox<=halfSpanX; ox+=10){
+    const x = cx+ox;
+    if(x<0||x>w) continue;
+    const px=x*PX_PER_MM;
+    const isCenter = ox===0;
+    ctx.strokeStyle = isCenter ? 'rgba(198,134,60,.6)' : (ox%50===0 ? 'rgba(46,27,18,.25)' : 'rgba(46,27,18,.08)');
+    ctx.lineWidth = isCenter ? 1.5 : (ox%50===0?1:.5);
+    ctx.beginPath(); ctx.moveTo(px,0); ctx.lineTo(px,canvas.height); ctx.stroke();
+  }
+  for(let oy=-halfSpanY; oy<=halfSpanY; oy+=10){
+    const y = cy+oy;
+    if(y<0||y>h) continue;
+    const py=y*PX_PER_MM;
+    const isCenter = oy===0;
+    ctx.strokeStyle = isCenter ? 'rgba(198,134,60,.6)' : (oy%50===0 ? 'rgba(46,27,18,.25)' : 'rgba(46,27,18,.08)');
+    ctx.lineWidth = isCenter ? 1.5 : (oy%50===0?1:.5);
+    ctx.beginPath(); ctx.moveTo(0,py); ctx.lineTo(canvas.width,py); ctx.stroke();
+  }
+}
+
+// ---------------- 따라 그리기 가이드 (그림자처럼 화면에만 표시, strokes에는 안 들어가서 프린트 안 됨) ----------------
+let templateShape = null; // 'circle' | 'triangle' | 'star' | 'spade' | 'club' | 'heart' | 'diamond' | null
+// 가이드 박스: 화면 기준 mm (화면은 200x240 세로형이므로 실제 중앙 = x:40~160, y:60~180)
+const TMPL_BOX = { x: 40, y: 60, w: 120, h: 120 };
+
+// ---- 곡선을 점 목록으로 변환하는 헬퍼 (가이드 표시 + "채우기" 스탬프가 이 점 목록을 공유해서 서로 어긋나지 않게 함) ----
+function sampleCubicBezier(p0, c1, c2, p1, n) {
+  const pts = [];
+  for (let i = 1; i <= n; i++) {
+    const t = i / n, mt = 1 - t;
+    pts.push({
+      x: mt*mt*mt*p0.x + 3*mt*mt*t*c1.x + 3*mt*t*t*c2.x + t*t*t*p1.x,
+      y: mt*mt*mt*p0.y + 3*mt*mt*t*c1.y + 3*mt*t*t*c2.y + t*t*t*p1.y,
+    });
+  }
+  return pts; // 시작점(p0)은 포함하지 않음 (이전 세그먼트 끝점과 중복되므로)
+}
+function circlePoints(cx, cy, r, n) {
+  const pts = [];
+  for (let i = 0; i < n; i++) {
+    const ang = i / n * Math.PI * 2;
+    pts.push({ x: cx + r * Math.cos(ang), y: cy + r * Math.sin(ang) });
+  }
+  return pts;
+}
+function starPoints(cx, cy, rOuter, rInner) {
+  const pts = [];
+  for (let i = 0; i < 10; i++) {
+    const r = i % 2 === 0 ? rOuter : rInner;
+    const ang = -Math.PI / 2 + i * Math.PI / 5;
+    pts.push({ x: cx + r * Math.cos(ang), y: cy + r * Math.sin(ang) });
+  }
+  return pts;
+}
+
+// 각 도형: "루프(닫힌 선) 목록"으로 정의. 좌표는 0~100 정규화(가이드 박스 안 비율).
+// 클로버처럼 원 3개+줄기같이 여러 개의 독립된 선으로 이뤄진 도형은 루프를 여러 개 둠.
+const TEMPLATE_LOOPS = {
+  circle: [ circlePoints(50, 50, 42, 60) ],
+  triangle: [ [ {x:50,y:6}, {x:94,y:88}, {x:6,y:88} ] ],
+  star: [ starPoints(50, 54, 46, 18) ],
+  heart: [
+    // ♥ 글자를 실제로 렌더링해서 뽑아낸 진짜 윤곽선 (DejaVu Sans Bold)
+    [ {x:50.0,y:90.52}, {x:48.54,y:89.19}, {x:18.97,y:52.93}, {x:14.5,y:46.51}, {x:11.72,y:40.52}, {x:10.18,y:34.38}, {x:9.9,y:28.38}, {x:10.74,y:23.78}, {x:12.41,y:19.87}, {x:14.37,y:17.09}, {x:17.36,y:14.09}, {x:20.85,y:11.58}, {x:26.71,y:9.48}, {x:32.57,y:9.34}, {x:35.91,y:10.18}, {x:38.28,y:11.3}, {x:43.1,y:15.27}, {x:46.03,y:19.32}, {x:47.98,y:23.08}, {x:50.0,y:29.71}, {x:51.32,y:24.9}, {x:53.42,y:20.15}, {x:56.62,y:15.41}, {x:59.48,y:12.83}, {x:62.97,y:10.74}, {x:66.88,y:9.48}, {x:71.48,y:9.21}, {x:75.94,y:10.04}, {x:79.15,y:11.44}, {x:82.5,y:13.81}, {x:85.91,y:17.5}, {x:88.56,y:21.69}, {x:90.1,y:27.82}, {x:90.1,y:32.85}, {x:88.98,y:38.84}, {x:85.77,y:46.51}, {x:82.43,y:51.67}, {x:50.0,y:90.52} ],
+  ],
+  diamond: [
+    // ♦ 글자를 실제로 렌더링해서 뽑아낸 진짜 윤곽선
+    [ {x:50.0,y:90.52}, {x:18.69,y:50.14}, {x:22.04,y:45.26}, {x:50.14,y:9.34}, {x:78.94,y:46.65}, {x:81.17,y:50.14}, {x:50.0,y:90.52} ],
+  ],
+  spade: [
+    // ♠ 글자를 실제로 렌더링해서 뽑아낸 진짜 윤곽선
+    [ {x:55.72,y:90.52}, {x:44.07,y:90.45}, {x:46.03,y:86.12}, {x:47.84,y:79.15}, {x:48.68,y:71.76}, {x:48.61,y:66.25}, {x:46.44,y:66.32}, {x:42.96,y:72.59}, {x:40.1,y:75.59}, {x:38.28,y:76.85}, {x:34.24,y:78.24}, {x:30.33,y:78.24}, {x:26.99,y:77.41}, {x:25.03,y:76.43}, {x:21.62,y:73.43}, {x:18.27,y:67.57}, {x:17.57,y:63.25}, {x:17.57,y:59.21}, {x:18.13,y:55.58}, {x:21.06,y:48.33}, {x:24.55,y:43.17}, {x:34.03,y:31.73}, {x:42.12,y:21.13}, {x:50.0,y:9.21}, {x:60.39,y:24.76}, {x:74.34,y:42.19}, {x:78.94,y:48.61}, {x:81.59,y:55.02}, {x:82.43,y:60.04}, {x:82.01,y:66.6}, {x:80.2,y:70.92}, {x:78.66,y:73.01}, {x:75.52,y:75.87}, {x:73.29,y:77.27}, {x:71.06,y:77.96}, {x:65.48,y:78.24}, {x:61.85,y:76.99}, {x:60.04,y:75.73}, {x:57.18,y:72.73}, {x:53.7,y:66.46}, {x:51.32,y:66.32}, {x:51.46,y:73.15}, {x:52.16,y:79.29}, {x:53.42,y:84.73}, {x:55.72,y:90.52} ],
+  ],
+  club: [
+    // ♣ 글자를 실제로 렌더링해서 뽑아낸 진짜 윤곽선
+    [ {x:55.72,y:90.52}, {x:44.42,y:90.52}, {x:44.07,y:90.17}, {x:46.16,y:85.98}, {x:47.56,y:80.68}, {x:48.54,y:72.59}, {x:48.61,y:64.85}, {x:45.75,y:70.92}, {x:43.51,y:73.99}, {x:40.93,y:76.43}, {x:36.05,y:79.08}, {x:32.29,y:79.92}, {x:29.08,y:80.06}, {x:25.87,y:79.64}, {x:22.94,y:78.66}, {x:18.55,y:75.66}, {x:14.5,y:70.5}, {x:13.11,y:67.15}, {x:12.41,y:63.39}, {x:12.69,y:58.37}, {x:13.81,y:54.74}, {x:16.18,y:50.98}, {x:20.15,y:47.56}, {x:25.87,y:44.91}, {x:29.92,y:44.35}, {x:36.33,y:44.49}, {x:41.7,y:45.82}, {x:36.82,y:40.38}, {x:33.75,y:34.24}, {x:32.36,y:28.8}, {x:32.78,y:22.66}, {x:34.87,y:17.78}, {x:38.42,y:13.81}, {x:44.14,y:10.18}, {x:49.3,y:9.21}, {x:54.88,y:9.76}, {x:60.18,y:12.27}, {x:64.3,y:16.39}, {x:66.39,y:19.74}, {x:67.5,y:22.52}, {x:68.06,y:29.08}, {x:66.95,y:33.4}, {x:62.9,y:40.79}, {x:58.44,y:45.82}, {x:63.53,y:44.49}, {x:70.5,y:44.35}, {x:74.97,y:45.19}, {x:78.87,y:46.86}, {x:81.1,y:48.4}, {x:85.22,y:53.21}, {x:86.75,y:56.56}, {x:87.59,y:61.3}, {x:86.89,y:67.43}, {x:85.5,y:70.78}, {x:83.54,y:73.57}, {x:80.82,y:76.15}, {x:77.48,y:78.38}, {x:75.66,y:79.22}, {x:71.62,y:79.92}, {x:67.57,y:79.92}, {x:64.78,y:79.36}, {x:62.13,y:78.38}, {x:59.34,y:76.71}, {x:55.09,y:72.32}, {x:51.39,y:65.13}, {x:51.32,y:71.48}, {x:52.3,y:80.96}, {x:53.56,y:85.98}, {x:55.72,y:90.52} ],
+  ],
+};
+
+function loopsToPath2D(loops) {
+  const p = new Path2D();
+  for (const loop of loops) {
+    if (loop.length < 2) continue;
+    p.moveTo(loop[0].x, loop[0].y);
+    for (let i = 1; i < loop.length; i++) p.lineTo(loop[i].x, loop[i].y);
+    p.closePath();
+  }
+  return p;
+}
+
+function drawTemplateGuide(){
+  if(!templateShape) return;
+  const loops = TEMPLATE_LOOPS[templateShape];
+  if(!loops) return;
+  const boxPx = TMPL_BOX.w * PX_PER_MM; // TMPL_BOX가 정사각형이라 w/h 동일 스케일 사용
+  const s = boxPx / 100;
+  ctx.save();
+  ctx.translate(TMPL_BOX.x * PX_PER_MM, TMPL_BOX.y * PX_PER_MM);
+  ctx.scale(s, s);
+  const path = loopsToPath2D(loops);
+  ctx.fillStyle = 'rgba(198,134,60,.16)';
+  ctx.fill(path);
+  ctx.strokeStyle = 'rgba(198,134,60,.85)';
+  ctx.lineWidth = 3 / s;
+  ctx.setLineDash([6 / s, 4 / s]);
+  ctx.stroke(path);
+  ctx.restore();
+}
+
+// "채우기": 현재 선택된 가이드 도형을 실제 선(strokes)으로 캔버스에 찍어서 그대로 프린트되게 함.
+// 가이드랑 똑같은 TEMPLATE_LOOPS 점 목록을 그대로 재사용하므로 위치/모양이 항상 가이드와 일치함.
+function stampTemplate(){
+  if(!templateShape) return;
+  const loops = TEMPLATE_LOOPS[templateShape];
+  if(!loops) return;
+  for(const loop of loops){
+    if(loop.length < 2) continue;
+    const screenPts = loop.map(pt => ({
+      x: TMPL_BOX.x + (pt.x / 100) * TMPL_BOX.w,
+      y: TMPL_BOX.y + (pt.y / 100) * TMPL_BOX.h,
+    }));
+    screenPts.push({ ...screenPts[0] }); // 시작점으로 되돌아가 선을 닫음
+    strokes.push({ points: screenPts });
+  }
+  redrawStrokes();
+  updatePrintBtn();
+}
+
+let strokes = [], currentStroke=null, tool='pen', lineStart=null, drawing=false;
+
+// 포인터 픽셀 -> 화면 기준 mm 좌표 (strokes에는 항상 "화면 기준" mm로 저장, 기계 좌표 변환은 서버에서)
+function toMM(e){
+  const r = canvas.getBoundingClientRect();
+  const cx = (e.touches?e.touches[0].clientX:e.clientX)-r.left;
+  const cy = (e.touches?e.touches[0].clientY:e.clientY)-r.top;
+  const dispPt = {x: cx/PX_PER_MM, y: cy/PX_PER_MM};
+  return toMachine(dispPt);
+}
+function dist(a,b){ return Math.hypot(a.x-b.x,a.y-b.y); }
+function redrawStrokes(){
+  drawGrid();
+  drawTemplateGuide();
+  strokes.forEach(drawStroke);
+  if(currentStroke) drawStroke(currentStroke);
+}
+function drawStroke(s){
+  if(s.points.length<2) return;
+  ctx.save();
+  ctx.strokeStyle='#2E1B12';
+  ctx.lineWidth = Math.max(1.5, parseFloat(document.getElementById('pLineWidth').value||1.2)*PX_PER_MM*0.6);
+  ctx.lineJoin='round'; ctx.lineCap='round';
+  ctx.beginPath();
+  const p0 = toDisplayPt(s.points[0]);
+  ctx.moveTo(p0.x*PX_PER_MM, p0.y*PX_PER_MM);
+  for(let i=1;i<s.points.length;i++){
+    const p = toDisplayPt(s.points[i]);
+    ctx.lineTo(p.x*PX_PER_MM, p.y*PX_PER_MM);
+  }
+  ctx.stroke(); ctx.restore();
+}
+function eraseNear(pt){
+  const T=4;
+  for(let i=strokes.length-1;i>=0;i--)
+    for(const p of strokes[i].points)
+      if(dist(p,pt)<T){ strokes.splice(i,1); return true; }
+  return false;
+}
+canvas.addEventListener('pointerdown', e=>{
+  const pt=toMM(e);
+  if(tool==='pen'){ drawing=true; currentStroke={points:[pt]}; }
+  else if(tool==='line'){
+    if(!lineStart) lineStart=pt;
+    else { strokes.push({points:[lineStart,pt]}); lineStart=null; redrawStrokes(); updatePrintBtn(); }
+  } else if(tool==='eraser'){ if(eraseNear(pt)){ redrawStrokes(); updatePrintBtn(); } }
+});
+canvas.addEventListener('pointermove', e=>{
+  const pt=toMM(e);
+  if(tool==='pen'&&drawing){ currentStroke.points.push(pt); redrawStrokes(); }
+  if(tool==='eraser'&&e.buttons===1){ if(eraseNear(pt)){ redrawStrokes(); updatePrintBtn(); } }
+});
+window.addEventListener('pointerup', ()=>{
+  if(tool==='pen'&&drawing&&currentStroke){
+    if(currentStroke.points.length>1) strokes.push(currentStroke);
+    currentStroke=null; drawing=false; redrawStrokes(); updatePrintBtn();
+  }
+});
+function setTool(t){
+  tool=t; lineStart=null;
+  ['toolPen','toolLine','toolEraser'].forEach(id=>document.getElementById(id).classList.remove('active'));
+  document.getElementById(t==='pen'?'toolPen':t==='line'?'toolLine':'toolEraser').classList.add('active');
+}
+document.getElementById('toolPen').onclick=()=>setTool('pen');
+document.getElementById('toolLine').onclick=()=>setTool('line');
+document.getElementById('toolEraser').onclick=()=>setTool('eraser');
+document.getElementById('btnUndo').onclick=()=>{ strokes.pop(); redrawStrokes(); updatePrintBtn(); };
+document.getElementById('btnClear').onclick=()=>{ strokes=[]; redrawStrokes(); updatePrintBtn(); };
+
+// 따라 그리기 템플릿 버튼: 같은 걸 다시 누르면 해제(토글), 다른 걸 누르면 교체
+const TMPL_BTN_IDS = { circle:'tmplCircle', triangle:'tmplTriangle', star:'tmplStar', spade:'tmplSpade', club:'tmplClub', heart:'tmplHeart', diamond:'tmplDiamond' };
+Object.entries(TMPL_BTN_IDS).forEach(([key, id])=>{
+  document.getElementById(id).onclick = () => {
+    templateShape = (templateShape === key) ? null : key;
+    Object.values(TMPL_BTN_IDS).forEach(bid => document.getElementById(bid).classList.remove('active'));
+    if (templateShape) document.getElementById(id).classList.add('active');
+    redrawStrokes();
+  };
+});
+document.getElementById('btnTmplClear').onclick = () => {
+  templateShape = null;
+  Object.values(TMPL_BTN_IDS).forEach(bid => document.getElementById(bid).classList.remove('active'));
+  redrawStrokes();
+};
+document.getElementById('btnTmplFill').onclick = () => {
+  stampTemplate();
+};
+
+// ---------------- settings drawer ----------------
+const drawer=document.getElementById('drawer'), overlay=document.getElementById('overlay');
+document.getElementById('btnSettings').onclick=()=>{ drawer.classList.add('open'); overlay.classList.add('show'); refreshPorts(); };
+document.getElementById('drawerClose').onclick=closeDrawer;
+overlay.onclick=closeDrawer;
+function closeDrawer(){ drawer.classList.remove('open'); overlay.classList.remove('show'); }
+
+document.getElementById('pBedX').addEventListener('change', e=>{ bedX=parseFloat(e.target.value)||200; resizeCanvas(); });
+
+// [수정] 이제 축 스왑이 없으므로, 기계 X 범위가 바뀌면 화면 "가로"가,
+// 기계 Y 범위가 바뀌면 화면 "세로"가 그대로 바뀐다.
+function updatePrintArea(){
+  const xMin=parseFloat(document.getElementById('pPrintXMin').value)||0;
+  const xMax=parseFloat(document.getElementById('pPrintXMax').value)||200;
+  const yMin=parseFloat(document.getElementById('pPrintYMin').value)||0;
+  const yMax=parseFloat(document.getElementById('pPrintYMax').value)||240;
+  printW = xMax - xMin; // 화면 가로 = 기계 X 범위
+  printH = yMax - yMin; // 화면 세로 = 기계 Y 범위
+  resizeCanvas();
+}
+['pPrintXMin','pPrintXMax','pPrintYMin','pPrintYMax'].forEach(id=>{
+  document.getElementById(id).addEventListener('change', updatePrintArea);
+});
+
+// ---------------- connection ----------------
+let connected=false;
+function refreshPorts(){
+  fetch('/api/ports').then(r=>r.json()).then(ports=>{
+    const sel=document.getElementById('portSelect');
+    sel.innerHTML='';
+    ports.forEach(p=>{
+      const o=document.createElement('option'); o.value=p.device; o.textContent=`${p.device} (${p.desc})`;
+      sel.appendChild(o);
+    });
+  });
+}
+document.getElementById('btnRefreshPorts').onclick=refreshPorts;
+document.getElementById('btnConnect').onclick=()=>{
+  const port=document.getElementById('portSelect').value;
+  if(!port) return;
+  socket.emit('connect_printer', {port});
+};
+socket.on('connect_result', d=>{
+  connected = d.ok;
+  const badge=document.getElementById('connBadge');
+  badge.classList.toggle('on', connected);
+  document.getElementById('connText').textContent = connected ? '연결됨' : (d.msg||'연결 안됨');
+  updatePrintBtn();
+});
+socket.on('temp_update', t=>{
+  document.getElementById('tNozzle').textContent = `${t.nozzle.toFixed(1)}°`;
+  document.getElementById('tBed').textContent = `${t.bed.toFixed(1)}°`;
+});
+
+// ---------------- print ----------------
+function updatePrintBtn(){
+  document.getElementById('btnPrint').disabled = !(connected && strokes.length>0);
+}
+function collectOverrides(){
+  return {
+    bed_x: parseFloat(document.getElementById('pBedX').value),
+    print_x_min: parseFloat(document.getElementById('pPrintXMin').value),
+    print_x_max: parseFloat(document.getElementById('pPrintXMax').value),
+    print_y_min: parseFloat(document.getElementById('pPrintYMin').value),
+    print_y_max: parseFloat(document.getElementById('pPrintYMax').value),
+    first_layer_height: parseFloat(document.getElementById('pFirstLayer').value),
+    line_width: parseFloat(document.getElementById('pLineWidth').value),
+    walls: parseInt(document.getElementById('pWalls').value),
+    flow_pct: parseFloat(document.getElementById('pFlow').value),
+    e_calibration: parseFloat(document.getElementById('pECal').value),
+    nozzle_temp: parseFloat(document.getElementById('pNozzle').value),
+    bed_temp: parseFloat(document.getElementById('pBed').value),
+    retract_mm: parseFloat(document.getElementById('pRetract').value),
+  };
+}
+document.getElementById('btnPrint').onclick=()=>{
+  socket.emit('start_print', {strokes, overrides: collectOverrides()});
+  document.getElementById('btnPrint').disabled=true;
+  document.getElementById('btnCancel').disabled=false;
+  document.getElementById('progLabel').textContent='프린트 중...';
+};
+document.getElementById('btnCancel').onclick=()=>{
+  socket.emit('cancel_print');
+};
+socket.on('print_progress', d=>{
+  document.getElementById('progFill').style.width = d.percent+'%';
+  document.getElementById('progLabel').textContent = `${d.percent}% · ${d.line}`;
+});
+socket.on('print_status', d=>{
+  document.getElementById('btnCancel').disabled=true;
+  updatePrintBtn();
+  document.getElementById('progLabel').textContent = d.state==='done' ? '완료' : '취소됨';
+  if(d.state==='done') setTimeout(()=>{ document.getElementById('progFill').style.width='0%'; document.getElementById('progLabel').textContent='대기 중'; }, 3000);
+});
+
+// init
+resizeCanvas();
+refreshPorts();
+</script>
+</body>
+</html>

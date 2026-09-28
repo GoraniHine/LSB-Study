@@ -1,0 +1,5 @@
+Flask==3.0.3
+Flask-SocketIO==5.3.6
+pyserial==3.5
+simple-websocket==1.0.0
+pywebview==5.1
